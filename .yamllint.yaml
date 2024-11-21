@@ -1,0 +1,13 @@
+---
+extends: default
+
+ignore:
+  - docs/_publish.yml
+  - ci/conda-lock/python-*.yml
+
+rules:
+  document-start: disable
+  line-length: disable # we already enforce this with prettier
+  truthy: disable
+  comments:
+    min-spaces-from-content: 1

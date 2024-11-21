@@ -1,0 +1,23 @@
+```{python}
+#| echo: false
+#| output: asis
+
+from _utils import get_backend, render_methods, dump_methods_to_json_for_algolia
+
+# defined in the backend qmd, e.g., ../bigquery.qmd
+module = BACKEND.lower()
+backend = get_backend(module)
+
+print(f"## `{module}.Backend` {{ #{backend.canonical_path} }}")
+
+methods = sorted(
+    key for key, value in backend.all_members.items()
+    if value.is_function
+    if not value.name.startswith("_")
+    if value.name != "do_connect"
+)
+
+dump_methods_to_json_for_algolia(backend, methods)
+
+render_methods(backend, *methods, level=3)
+```

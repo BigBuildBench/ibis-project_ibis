@@ -1,0 +1,156 @@
+# Trino
+
+[https://trino.io](https://trino.io)
+
+![](https://img.shields.io/badge/memtables-fallback-yellow?style=flat-square) ![](https://img.shields.io/badge/inputs-Trino tables-blue?style=flat-square) ![](https://img.shields.io/badge/outputs-Trino tables | CSV | pandas | Parquet | PyArrow-orange?style=flat-square)
+
+## Install
+
+Install Ibis and dependencies for the Trino backend:
+
+::: {.panel-tabset}
+
+## `pip`
+
+Install with the `trino` extra:
+
+```{.bash}
+pip install 'ibis-framework[trino]'
+```
+
+And connect:
+
+```{.python}
+import ibis
+
+con = ibis.trino.connect()  # <1>
+```
+
+1. Adjust connection parameters as needed.
+
+## `conda`
+
+Install for Trino:
+
+```{.bash}
+conda install -c conda-forge ibis-trino
+```
+
+And connect:
+
+```{.python}
+import ibis
+
+con = ibis.trino.connect()  # <1>
+```
+
+1. Adjust connection parameters as needed.
+
+## `mamba`
+
+Install for Trino:
+
+```{.bash}
+mamba install -c conda-forge ibis-trino
+```
+
+And connect:
+
+```{.python}
+import ibis
+
+con = ibis.trino.connect()  # <1>
+```
+
+1. Adjust connection parameters as needed.
+
+:::
+
+
+## Connect
+
+### `ibis.trino.connect`
+
+```python
+con = ibis.trino.connect(
+    user="user",
+    password="password",
+    port=8080,
+    database="database",
+    schema="default",
+)
+```
+
+::: {.callout-note}
+`ibis.trino.connect` is a thin wrapper around [`ibis.backends.trino.Backend.do_connect`](#ibis.backends.trino.Backend.do_connect)."
+:::
+
+### Connection Parameters
+
+```{python}
+#| echo: false
+#| output: asis
+from _utils import render_do_connect
+
+render_do_connect("trino")
+```
+
+### Authenticating with SSO
+
+Ibis supports connecting to SSO-enabled Trino clusters using the
+`OAuth2Authentication` helper from the `trino` library.
+
+```python
+import ibis
+from trino.auth import OAuth2Authentication
+
+con = ibis.trino.connect(
+  user="user",
+  host="hostname",
+  port=443,
+  database="database",
+  schema="default",
+  auth=OAuth2Authentication(),
+  http_scheme="https"
+)
+```
+
+### Connecting to Starburst managed Trino instances
+
+Starburst makes use of role-based access controls.  When connecting to a
+Starburst Trino cluster, if you encounter issues listing or connecting to
+tables, ensure that a role is specified using the `roles` keyword.
+
+```python
+import ibis
+
+con = ibis.trino.connect(
+    user="user",
+    host="hostname",
+    port=443,
+    database="sample",
+    schema="demo",
+    roles="defaultrolewithtableaccess",  #<1>
+    http_scheme="https"
+)
+```
+
+1. Role names will be visible in the Starburst Galaxy dashboard.
+
+#### Finding your Starburst `host`
+
+Log into Starburst Galaxy and select `Clusters` from the left-hand-side menu:
+
+![](./images/starburst_clusters.svg)
+
+Select `Connection info` for the cluster you wish to connect to -- the username
+and hostname displayed can be copied directly into the Ibis `connect` call.
+
+![](./images/starburst_connection_info.svg)
+
+```{python}
+#| echo: false
+BACKEND = "Trino"
+```
+
+{{< include ./_templates/api.qmd >}}

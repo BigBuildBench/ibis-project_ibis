@@ -1,0 +1,267 @@
+---
+title: "Ibis"
+description: "the portable Python dataframe library"
+repo-actions: false
+code-annotations: hover
+twitter-card:
+  image: logo.png
+format:
+  html:
+    toc: false
+    include-in-header:
+      text: |
+        <script data-goatcounter="https://ibis.goatcounter.com/count"
+                async src="//gc.zgo.at/count.js"></script>
+about:
+  id: about
+  template: jolla
+  image: logo.svg
+  links:
+    - icon: info-circle
+      href: why.qmd
+    - icon: download
+      href: install.qmd
+    - icon: book
+      href: tutorials/getting_started.qmd
+    - icon: postcard
+      text: Blog
+      href: posts.qmd
+    - icon: github
+      text: GitHub
+      href: https://github.com/ibis-project
+    - icon: zulip
+      href: https://ibis-project.zulipchat.com
+      text: Chat
+    - icon: rss
+      text: RSS
+      href: https://ibis-project.org/posts.xml
+---
+
+::: {#about}
+:::
+
+{{< pagebreak >}}
+
+::: {.column-page}
+
+### An open source dataframe library that works with any data system
+
+- Use the same API for 20+ backends
+- Fast local dataframes with embedded DuckDB (default), Polars, or DataFusion
+- Iterate locally and deploy remotely by changing a single line of code
+- Compose SQL and Python dataframe code, bridging the gap between data engineering and data science
+
+```{python}
+#| code-fold: true
+#| echo: false
+
+import ibis
+
+t = ibis.examples.penguins.fetch()
+t.to_parquet("penguins.parquet")
+```
+
+## Ibis: the portable Python dataframe library
+
+Ibis offers a familiar local dataframe experience with outstanding performance,
+using [DuckDB](https://duckdb.org) by default.
+
+```{python}
+import ibis  # <1>
+
+ibis.options.interactive = True  # <2>
+
+t = ibis.read_parquet("penguins.parquet", table_name="penguins")  # <3>
+t.head(3)  # <4>
+```
+
+1. Import Ibis.
+2. Enable interactive mode for exploratory data analysis (EDA) or demos.
+3. Read a Parquet file and specify a table name (optional).
+4. Display the first few rows of the table.
+
+Iterate and explore data locally:
+
+```{python}
+grouped = t.group_by("species", "island").agg(count=t.count()).order_by("count")  # <1>
+grouped  # <2>
+```
+
+1. Transform the table.
+2. Display the transformed table.
+
+### One API for 20+ backends
+
+Use the same dataframe API for 20+ backends:
+
+```{python}
+#| code-fold: true
+#| echo: false
+
+from backends_sankey import fig
+fig.show()
+```
+
+For example:
+
+::: {.panel-tabset}
+
+## DuckDB
+
+```{python}
+con = ibis.connect("duckdb://")
+```
+
+```{python}
+t = con.read_parquet("penguins.parquet")
+t.head(3)
+```
+
+```{python}
+t.group_by("species", "island").agg(count=t.count()).order_by("count")
+```
+
+## Polars
+
+```{python}
+con = ibis.connect("polars://")
+```
+
+```{python}
+t = con.read_parquet("penguins.parquet")
+t.head(3)
+```
+
+```{python}
+t.group_by("species", "island").agg(count=t.count()).order_by("count")
+```
+
+## DataFusion
+
+```{python}
+con = ibis.connect("datafusion://")
+```
+
+```{python}
+t = con.read_parquet("penguins.parquet")
+t.head(3)
+```
+
+```{python}
+t.group_by("species", "island").agg(count=t.count()).order_by("count")
+```
+
+## PySpark
+
+```{python}
+con = ibis.connect("pyspark://")
+```
+
+```{python}
+t = con.read_parquet("penguins.parquet")
+t.head(3)
+```
+
+```{python}
+t.group_by("species", "island").agg(count=t.count()).order_by("count")
+```
+
+:::
+
+This allows you to iterate locally and deploy remotely by changing a single line
+of code. For instance, develop locally with DuckDB and deploy remotely to
+BigQuery. Or, using any combination of backends that meet your requirements.
+
+### Python + SQL: better together
+
+Ibis works by decoupling the dataframe API from the backend execution. Most
+backends support a SQL dialect, which Ibis compiles its expressions into using
+[SQLGlot](https://github.com/tobymao/sqlglot). You can inspect the SQL that Ibis
+generates for any SQL backend:
+
+
+```{python}
+ibis.to_sql(grouped)  # <1>
+```
+
+1. Display the SQL generated from the table expression.
+
+And use SQL strings directly, mixing and matching with Python dataframe code:
+
+```{python}
+#| code-fold: true
+#| echo: false
+
+t = ibis.read_parquet("penguins.parquet", table_name="penguins")
+```
+
+```{python}
+t.sql(  # <1>
+    "SELECT species, island, COUNT(*) AS count FROM penguins GROUP BY species, island"  # <1>
+).order_by("count")  # <2>
+```
+
+1. Transform the table using SQL.
+2. Then, transform the table using Python dataframe code.
+
+This allows you to combine the flexibility of Python with the scale and
+performance of modern SQL.
+
+::: {.text-center}
+## Users say...
+:::
+
+::: {.index-grid}
+
+::: {.index-g-col-4 .card .border-light .mb-3 .text-center}
+::: {.card-body}
+["Ibis is amazing, there is so much bikeshedding out there that this library
+improves upon. I love that now we can empower any visualization with nearly
+any dataset! Big thanks to those who have contributed!"]{.card-text}
+
+[Nick Shook]{.blockquote-footer}
+:::
+:::
+
+::: {.index-g-col-4 .card .border-light .mb-3 .text-center}
+::: {.card-body}
+"I now have Ibis code that runs PySpark in my Databricks environment and Polars
+on my laptop which is pretty slick 🔥"
+
+[Mark Druffel]{.blockquote-footer}
+:::
+:::
+
+::: {.index-g-col-4 .card .border-light .mb-3 .text-center}
+::: {.card-body}
+"I love that with Ibis, I can use SQL for the heavy lifting or aggregations and
+then switch to a dataframe-like API for the type of dynamic transformations that
+would otherwise be tedious to do in pure SQL."
+
+[Daniel Kim]{.blockquote-footer}
+:::
+:::
+
+:::
+
+::: {.text-center}
+## Get started with Ibis
+:::
+
+::: {.index-grid .text-center}
+
+::: {.index-g-col-4}
+[Why Ibis?](why.qmd){.btn .btn-primary .w-100}
+:::
+
+::: {.index-g-col-4}
+[Tutorial: getting started](tutorials/getting_started.qmd){.btn .btn-primary .w-100}
+:::
+
+::: {.index-g-col-4}
+[API reference](/reference){.btn .btn-primary .w-100}
+:::
+
+:::
+
+:::

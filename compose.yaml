@@ -1,0 +1,609 @@
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8.4.13-alpine
+    ports:
+      - 8123:8123 # http port
+      - 9000:9000 # native protocol port
+    healthcheck:
+      interval: 1s
+      retries: 10
+      test:
+        - CMD-SHELL
+        - wget -qO- 'http://127.0.0.1:8123/?query=SELECT%201' # SELECT 1
+    volumes:
+      - clickhouse:/var/lib/clickhouse/user_files/ibis
+    networks:
+      - clickhouse
+
+  mysql:
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "true"
+      MYSQL_DATABASE: ibis_testing
+      MYSQL_PASSWORD: ibis
+      MYSQL_USER: ibis
+    healthcheck:
+      interval: 1s
+      retries: 20
+      test:
+        - CMD
+        - mariadb-admin
+        - ping
+    image: mariadb:11.5.2
+    ports:
+      - 3306:3306
+    networks:
+      - mysql
+    volumes:
+      - mysql:/data
+      - $PWD/docker/mysql:/docker-entrypoint-initdb.d:ro
+
+  postgres:
+    user: postgres
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ibis_testing
+      POSTGRES_USER: postgres
+    build: ./docker/postgres
+    image: ibis-postgres
+    healthcheck:
+      interval: 1s
+      retries: 20
+      test:
+        - CMD
+        - pg_isready
+    ports:
+      - 5432:5432
+    networks:
+      - postgres
+    volumes:
+      - postgres:/data
+
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      MSSQL_SA_PASSWORD: 1bis_Testing!
+      ACCEPT_EULA: "Y"
+      # The default collation in MSSQL isS QL_Latin1_General_CP1_CI_AS
+      # where the CI stands for Case Insensitive.
+      # We use a case-sensitive collation for testing so that we don't
+      # break users with case-sensitive collations.
+      MSSQL_COLLATION: Latin1_General_100_BIN2_UTF8
+    healthcheck:
+      interval: 1s
+      retries: 20
+      test:
+        - CMD-SHELL
+        - $(find /opt -name sqlcmd -type f -executable) -C -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -Q "SELECT 1"
+    ports:
+      - 1433:1433
+    volumes:
+      - mssql:/data
+    networks:
+      - mssql
+
+  hive-metastore-db:
+    image: postgres:16.4-alpine
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: metastore
+    healthcheck:
+      interval: 1s
+      retries: 20
+      test:
+        - CMD
+        - pg_isready
+        - --port=23456
+    command: -c port=23456
+    networks:
+      - trino
+
+  minio:
+    image: bitnami/minio:2024.9.9
+    environment:
+      MINIO_ROOT_USER: accesskey
+      MINIO_ROOT_PASSWORD: secretkey
+      MINIO_SKIP_CLIENT: "yes"
+    healthcheck:
+      interval: 1s
+      retries: 20
+      test:
+        - CMD-SHELL
+        - mc ready data && mc mb --ignore-existing data/trino data/risingwave
+    networks:
+      - trino
+      - risingwave
+    volumes:
+      - $PWD/docker/minio/config.json:/.mc/config.json:ro
+
+  hive-metastore:
+    # TODO: healthcheck?
+    image: starburstdata/hive:3.1.3-e.4
+    environment:
+      HIVE_METASTORE_DRIVER: org.postgresql.Driver
+      HIVE_METASTORE_JDBC_URL: jdbc:postgresql://hive-metastore-db:23456/metastore
+      HIVE_METASTORE_USER: admin
+      HIVE_METASTORE_PASSWORD: admin
+      HIVE_METASTORE_WAREHOUSE_DIR: s3://trino/
+      HIVE_METASTORE_USERS_IN_ADMIN_ROLE: "admin"
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: accesskey
+      S3_SECRET_KEY: secretkey
+      S3_PATH_STYLE_ACCESS: "true"
+      REGION: ""
+      GOOGLE_CLOUD_KEY_FILE_PATH: ""
+      AZURE_ADL_CLIENT_ID: ""
+      AZURE_ADL_CREDENTIAL: ""
+      AZURE_ADL_REFRESH_URL: ""
+      AZURE_ABFS_STORAGE_ACCOUNT: ""
+      AZURE_ABFS_ACCESS_KEY: ""
+      AZURE_WASB_STORAGE_ACCOUNT: ""
+      AZURE_ABFS_OAUTH: ""
+      AZURE_ABFS_OAUTH_TOKEN_PROVIDER: ""
+      AZURE_ABFS_OAUTH_CLIENT_ID: ""
+      AZURE_ABFS_OAUTH_SECRET: ""
+      AZURE_ABFS_OAUTH_ENDPOINT: ""
+      AZURE_WASB_ACCESS_KEY: ""
+    depends_on:
+      hive-metastore-db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - trino
+
+  trino:
+    depends_on:
+      - hive-metastore
+    healthcheck:
+      interval: 2s
+      retries: 15
+      test:
+        - CMD-SHELL
+        - trino --output-format null --execute 'show schemas in hive; show schemas in memory'
+    image: trinodb/trino:457
+    ports:
+      - 8080:8080
+    networks:
+      - trino
+    volumes:
+      - $PWD/docker/trino/catalog/memory.properties:/etc/trino/catalog/memory.properties:ro
+      - $PWD/docker/trino/catalog/hive.properties:/etc/trino/catalog/hive.properties:ro
+      - $PWD/docker/trino/jvm.config:/etc/trino/jvm.config:ro
+
+  druid-postgres:
+    image: postgres:16.4-alpine
+    container_name: druid-postgres
+    environment:
+      POSTGRES_PASSWORD: FoolishPassword
+      POSTGRES_USER: druid
+      POSTGRES_DB: druid
+    healthcheck:
+      interval: 2s
+      retries: 30
+      test:
+        - CMD-SHELL
+        - pg_isready
+    networks:
+      - druid
+
+  # Need 3.5 or later for container nodes
+  druid-zookeeper:
+    hostname: zookeeper
+    container_name: zookeeper
+    image: zookeeper:3.9
+    environment:
+      ZOO_MY_ID: 1
+    healthcheck:
+      interval: 2s
+      retries: 30
+      test:
+        - CMD-SHELL
+        - nc -z 127.0.0.1 2181
+    networks:
+      - druid
+
+  druid-coordinator:
+    image: apache/druid:30.0.0
+    hostname: coordinator
+    container_name: coordinator
+    volumes:
+      - druid:/opt/shared
+      - druid:/opt/druid/var
+    depends_on:
+      druid-zookeeper:
+        condition: service_healthy
+      druid-postgres:
+        condition: service_healthy
+    command:
+      - coordinator
+    healthcheck:
+      interval: 2s
+      retries: 30
+      test:
+        - CMD-SHELL
+        - nc -z 127.0.0.1 8081
+    env_file:
+      - ./docker/druid/environment
+    networks:
+      - druid
+
+  druid-broker:
+    image: apache/druid:30.0.0
+    hostname: broker
+    container_name: broker
+    volumes:
+      - druid:/opt/druid/var
+    depends_on:
+      druid-zookeeper:
+        condition: service_healthy
+      druid-postgres:
+        condition: service_healthy
+      druid-coordinator:
+        condition: service_healthy
+    command:
+      - broker
+    healthcheck:
+      interval: 2s
+      retries: 30
+      test:
+        - CMD-SHELL
+        - nc -z 127.0.0.1 8082
+    ports:
+      - 8082:8082
+    env_file:
+      - ./docker/druid/environment
+    networks:
+      - druid
+
+  druid-historical:
+    image: apache/druid:30.0.0
+    hostname: historical
+    container_name: historical
+    volumes:
+      - druid:/opt/shared
+      - druid:/opt/druid/var
+    depends_on:
+      druid-zookeeper:
+        condition: service_healthy
+      druid-postgres:
+        condition: service_healthy
+      druid-coordinator:
+        condition: service_healthy
+    command:
+      - historical
+    healthcheck:
+      interval: 2s
+      retries: 30
+      test:
+        - CMD-SHELL
+        - nc -z 127.0.0.1 8083
+    env_file:
+      - ./docker/druid/environment
+    networks:
+      - druid
+
+  druid-middlemanager:
+    image: apache/druid:30.0.0
+    hostname: middlemanager
+    container_name: middlemanager
+    volumes:
+      - druid:/data
+      - druid:/opt/shared
+      - druid:/opt/druid/var
+    depends_on:
+      druid-zookeeper:
+        condition: service_healthy
+      druid-postgres:
+        condition: service_healthy
+      druid-coordinator:
+        condition: service_healthy
+    command:
+      - middleManager
+    healthcheck:
+      interval: 2s
+      retries: 30
+      test:
+        - CMD-SHELL
+        - nc -z 127.0.0.1 8091
+    env_file:
+      - ./docker/druid/environment
+    networks:
+      - druid
+
+  druid:
+    image: apache/druid:30.0.0
+    hostname: router
+    container_name: router
+    volumes:
+      - druid:/opt/druid/var
+    depends_on:
+      druid-zookeeper:
+        condition: service_healthy
+      druid-postgres:
+        condition: service_healthy
+      druid-coordinator:
+        condition: service_healthy
+      druid-middlemanager:
+        condition: service_healthy
+      druid-historical:
+        condition: service_healthy
+      druid-broker:
+        condition: service_healthy
+    ports:
+      - 8888:8888
+    command:
+      - router
+    healthcheck:
+      interval: 2s
+      retries: 30
+      test:
+        - CMD-SHELL
+        - nc -z 127.0.0.1 8888
+    env_file:
+      - ./docker/druid/environment
+    networks:
+      - druid
+
+  oracle:
+    image: gvenzl/oracle-free:23.5-slim
+    environment:
+      ORACLE_PASSWORD: ibis
+      ORACLE_DATABASE: IBIS_TESTING
+      APP_USER: ibis
+      APP_USER_PASSWORD: ibis
+    ports:
+      - 1521:1521
+    healthcheck:
+      interval: 2s
+      retries: 25
+      test:
+        - CMD-SHELL
+        - ./healthcheck.sh
+    restart: on-failure
+    networks:
+      - oracle
+    volumes:
+      - oracle:/opt/oracle/data
+
+  exasol:
+    image: exasol/docker-db:8.31.0
+    privileged: true
+    ports:
+      - 8563:8563
+    healthcheck:
+      interval: 10s
+      retries: 9
+      timeout: 90s
+      test:
+        - CMD-SHELL
+        - /opt/exasol/db-8.*/bin/Console/exaplus -q -x -c 127.0.0.1:8563 -u sys -p exasol -jdbcparam validateservercertificate=0 -sql 'SELECT 1;'
+    networks:
+      - exasol
+    volumes:
+      - exasol:/data
+
+  flink-jobmanager:
+    image: flink:${FLINK_VERSION}
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+    ports:
+      - 8081:8081
+    command: jobmanager
+    networks:
+      - flink
+
+  flink:
+    image: ibis-flink-${FLINK_VERSION}
+    build:
+      context: ./docker/flink
+      args:
+        FLINK_VERSION: ${FLINK_VERSION}
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 2
+        taskmanager.memory.process.size: 2048m
+        taskmanager.memory.network.fraction: 0.4
+        taskmanager.memory.network.min: 512mb
+        taskmanager.memory.network.max: 2gb
+    depends_on:
+      - flink-jobmanager
+    command: taskmanager
+    networks:
+      - flink
+
+  kudu:
+    cap_add:
+      - SYS_TIME
+    image: apache/kudu:1.17.0
+    networks:
+      - impala
+    command: kudu master run --fs_wal_dir=/var/lib/kudu/master --fs_data_dirs=/var/lib/kudu/master
+    healthcheck:
+      interval: 1s
+      retries: 60
+      test:
+        - CMD-SHELL
+        - kudu cluster ksck kudu:7051
+
+  kudu-tserver:
+    cap_add:
+      - SYS_TIME
+    image: apache/kudu:1.17.0
+    depends_on:
+      kudu:
+        condition: service_healthy
+    networks:
+      - impala
+    command: kudu tserver run --fs_wal_dir=/var/lib/kudu/master --fs_data_dirs=/var/lib/kudu/master --tserver_master_addrs=kudu
+    healthcheck:
+      interval: 1s
+      retries: 60
+      test:
+        - CMD-SHELL
+        - kudu cluster ksck kudu:7051
+
+  impala-hive-metastore:
+    image: apache/impala:4.0.0-impala_quickstart_hms
+    container_name: impala-hive-metastore
+    command: hms
+    volumes:
+      # Volume used to store Apache Derby database.
+      - impala:/var/lib/hive
+      # Warehouse directory. HMS does file operations so needs access to the
+      # shared volume.
+      - impala:/user/hive/warehouse
+      - ./docker/impala/conf:/opt/hive/conf:ro
+    networks:
+      impala:
+        aliases:
+          - impala-hive-metastore
+          - impala-hive-metastore.impala
+
+  statestored:
+    image: apache/impala:4.0.0-statestored
+    ports:
+      - 25010:25010 # Web debug UI
+    command:
+      - -redirect_stdout_stderr=false
+      - -logtostderr
+      - -v=1
+    volumes:
+      - ./docker/impala/conf:/opt/impala/conf:ro
+    healthcheck:
+      interval: 30s
+      retries: 20
+      test:
+        - CMD-SHELL
+        - nc -z 127.0.0.1 25010
+    networks:
+      - impala
+
+  catalogd:
+    depends_on:
+      impala-hive-metastore:
+        condition: service_started
+      statestored:
+        condition: service_healthy
+    image: apache/impala:4.0.0-catalogd
+    ports:
+      - 25020:25020 # Web debug UI
+    command:
+      - -redirect_stdout_stderr=false
+      - -logtostderr
+      - -v=1
+      - -hms_event_polling_interval_s=1
+      - -invalidate_tables_timeout_s=999999
+    volumes:
+      # Warehouse directory. Catalog does file operations so needs access to the
+      # shared volume.
+      - impala:/user/hive/warehouse
+      - ./docker/impala/conf:/opt/impala/conf:ro
+    healthcheck:
+      interval: 30s
+      retries: 20
+      test:
+        - CMD-SHELL
+        - nc -z 127.0.0.1 25020
+    networks:
+      - impala
+
+  impala:
+    image: apache/impala:4.0.0-impalad_coord_exec
+    depends_on:
+      statestored:
+        condition: service_healthy
+      catalogd:
+        condition: service_healthy
+      kudu:
+        condition: service_healthy
+      kudu-tserver:
+        condition: service_healthy
+    ports:
+      - 21050:21050 # HS2 endpoint
+    healthcheck:
+      interval: 30s
+      retries: 20
+      test:
+        - CMD-SHELL
+        - nc -z 127.0.0.1 21050
+    command:
+      - -v=1
+      - -redirect_stdout_stderr=false
+      - -logtostderr
+      - -kudu_master_hosts=kudu:7051
+      - -mt_dop_auto_fallback=true
+      - -default_query_options=mt_dop=4,default_file_format=parquet,default_transactional_type=insert_only
+      - -mem_limit=4gb
+    environment:
+      # Keep the Java heap small to preserve memory for query execution.
+      JAVA_TOOL_OPTIONS: -Xmx1g
+    volumes:
+      - impala:/user/hive/warehouse
+      - ./docker/impala/conf:/opt/impala/conf:ro
+    networks:
+      - impala
+
+  risingwave:
+    image: ghcr.io/risingwavelabs/risingwave:v1.10.1
+    command: "standalone --meta-opts=\" \
+      --advertise-addr 0.0.0.0:5690 \
+      --backend mem \
+      --state-store hummock+minio://accesskey:secretkey@minio:9000/risingwave \
+      --data-directory hummock_001\" \
+      --compute-opts=\"--advertise-addr 0.0.0.0:5688 --role both\" \
+      --frontend-opts=\"--listen-addr 0.0.0.0:4566 --advertise-addr 0.0.0.0:4566\" \
+      --compactor-opts=\"--advertise-addr 0.0.0.0:6660\""
+    ports:
+      - 4566:4566
+    depends_on:
+      minio:
+        condition: service_healthy
+    volumes:
+      - risingwave:/data
+    environment:
+      RUST_BACKTRACE: "1"
+      ENABLE_TELEMETRY: "false"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - bash -c 'printf \"GET / HTTP/1.1\n\n\" > /dev/tcp/127.0.0.1/6660; exit $$?;'
+        - bash -c 'printf \"GET / HTTP/1.1\n\n\" > /dev/tcp/127.0.0.1/5688; exit $$?;'
+        - bash -c 'printf \"GET / HTTP/1.1\n\n\" > /dev/tcp/127.0.0.1/4566; exit $$?;'
+        - bash -c 'printf \"GET / HTTP/1.1\n\n\" > /dev/tcp/127.0.0.1/5690; exit $$?;'
+      interval: 1s
+      retries: 20
+    restart: on-failure
+    networks:
+      - risingwave
+
+networks:
+  impala:
+    # docker defaults to naming networks "$PROJECT_$NETWORK" but the Java Hive
+    # Metastore clients don't accept underscores in the thrift URIs and
+    # something is too-aggressively supplanting the specified thrift metastore
+    # URI with $SPECIFIED_URI.$NETWORK so rename it to something acceptable
+    name: "impala"
+  mysql:
+  mssql:
+  clickhouse:
+  postgres:
+  trino:
+  druid:
+  oracle:
+  exasol:
+  flink:
+  risingwave:
+
+volumes:
+  clickhouse:
+  druid:
+  mssql:
+  mysql:
+  oracle:
+  postgres:
+  exasol:
+  impala:
+  risingwave:

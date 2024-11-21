@@ -1,0 +1,8 @@
+---
+title: Presentations
+listing:
+  contents: presentations
+  type: table
+  sort:
+    - "date desc"
+---
